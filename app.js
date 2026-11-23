@@ -23,15 +23,37 @@ function inline(text){return linkify(text).replace(/\*\*([^*\n]+)\*\*/g,'<strong
 function tableCell(text){return String(text).split(/<br\s*\/?\s*>/i).map(part=>inline(part)).join('<br>')}
 function richParagraph(lines){
  const source=String(lines.join('\n')).replace(/\r\n?/g,'\n');
- const out=[];let paragraph=[];let table=[];
+ const out=[];let paragraph=[];let table=[];let list=[];
  const flushParagraph=()=>{if(paragraph.some(x=>x.trim()))out.push(`<p>${inline(paragraph.join('\n').trim())}</p>`);paragraph=[]};
  const flushTable=()=>{if(!table.length)return;const rows=table.map(line=>line.trim().replace(/^\|/,'').replace(/\|\s*$/,'').split('|').map(x=>x.trim()));const sep=rows.length>1&&rows[1].every(x=>/^:?-{3,}:?$/.test(x));const data=sep?rows.filter((_,i)=>i!==1):rows;const width=data[0]?.length||0;if(width){out.push('<div class="wiki-table-scroll"><table class="wiki-table"><tbody>'+data.map((row,i)=>'<tr>'+Array.from({length:width},(_,j)=>row[j]||'').map(cell=>`<${i===0?'th':'td'}>${tableCell(cell)}</${i===0?'th':'td'}>`).join('')+'</tr>').join('')+'</tbody></table></div>')}else out.push(`<p>${inline(table.join('\n'))}</p>`);table=[]};
+ const flushList=()=>{
+  if(!list.length)return;
+  let html='<ul class="wiki-bullets">',nested=false,first=true;
+  for(const item of list){
+   if(item.level===2&&!nested){html+='<ul class="wiki-bullets">';nested=true;first=true}
+   if(item.level===1&&nested){html+='</li></ul></li>';nested=false;first=true}
+   if(!first)html+='</li>';
+   html+='<li>'+inline(item.text);first=false;
+  }
+  html+='</li>'+(nested?'</ul></li>':'')+'</ul>';
+  out.push(html);list=[];
+ };
  for(const line of source.split('\n')){
+  const bullet=line.match(/^(\s*)([-*])\s+(.+)$/);
+  if(bullet){
+   flushTable();flushParagraph();
+   const level=bullet[1].length>=2?2:1;
+   list.push({level,text:bullet[3]});continue;
+  }
+  if(list.length&&/^\s{2,}\S/.test(line)&&!line.trim().startsWith('|')){
+   list[list.length-1].text+='\n'+line.trim();continue;
+  }
+  flushList();
   if(/^\s*\|/.test(line)){flushParagraph();table.push(line);continue}
   if(table.length&&line.trim()&&!/^\s*==/.test(line)){table[table.length-1]+='<br>'+line.trim();continue}
   flushTable();if(!line.trim()){flushParagraph()}else paragraph.push(line);
  }
- flushTable();flushParagraph();return out.join('');
+ flushTable();flushList();flushParagraph();return out.join('');
 }
 function sections(body){const lines=String(body||'').split(/\r?\n/);let intro=[],parts=[],section=null;for(const line of lines){const m=line.match(/^\s*==\s*(.*?)\s*==\s*$/);if(m){section={title:m[1],lines:[]};parts.push(section)}else (section?section.lines:intro).push(line)}return {lead:richParagraph(intro),sections:parts.map(s=>`<details class="section" open><summary>${inline(s.title)}</summary><div class="section-content article">${richParagraph(s.lines)}</div></details>`).join('')}}
 function row(n){return `<a class="list-row" href="#" data-open="${esc(n.id)}"><strong>${inline(n.title)}</strong><p>${esc((n.description||n.body||'').replace(/==/g,'').replace(/\s+/g,' ').slice(0,100))}</p><span class="meta">${esc(n.category||'未分類')} · ${date(n.updated)}</span></a>`}
@@ -56,7 +78,7 @@ function info(n){
 }
 function splitLegacy(body){const lines=String(body||'').split(/\r?\n/),lead=[],items=[];let current=null;for(const line of lines){const m=line.match(/^\s*==\s*(.*?)\s*==\s*$/);if(m){current={heading:m[1],text:''};items.push(current)}else if(current)current.text+=(current.text?'\n':'')+line;else lead.push(line)}return {lead:lead.join('\n').trim(),items}}
 function editorTools(){return `<div class="rich-toolbar global-tools"><button type="button" class="btn small" data-action="format-bold"><b>B</b> 太字</button><button type="button" class="btn small" data-action="format-link">🔗 記事リンク</button><span class="hint">文字を選択して使えます</span></div>`}
-function sectionInputs(items){return items.map((item,i)=>`<div class="section-editor"><div class="section-editor-head"><strong>見出し ${i+1}</strong><button type="button" class="btn small danger" data-action="remove-section">削除</button></div><label class="field">見出し名</label><input class="input section-heading" placeholder="例：歴史" value="${esc(item.heading)}"><label class="field">この見出しの本文</label><div class="rich-toolbar"><button type="button" class="btn small" data-action="bold" aria-label="選択した文字を太字にする"><b>B</b> 太字</button><button type="button" class="btn small" data-action="visual-table">▦ 表を編集</button><button type="button" class="btn small" data-action="format-link">🔗 リンク</button></div><textarea class="input section-text" rows="8" placeholder="ここに内容を入力">${esc(item.text)}</textarea></div>`).join('')}
+function sectionInputs(items){return items.map((item,i)=>`<div class="section-editor"><div class="section-editor-head"><strong>見出し ${i+1}</strong><button type="button" class="btn small danger" data-action="remove-section">削除</button></div><label class="field">見出し名</label><input class="input section-heading" placeholder="例：歴史" value="${esc(item.heading)}"><label class="field">この見出しの本文</label><div class="rich-toolbar"><button type="button" class="btn small" data-action="bold" aria-label="選択した文字を太字にする"><b>B</b> 太字</button><button type="button" class="btn small" data-action="bullet">● 箇条書き</button><button type="button" class="btn small" data-action="subbullet">○ 小項目</button><button type="button" class="btn small" data-action="visual-table">▦ 表を編集</button><button type="button" class="btn small" data-action="format-link">🔗 リンク</button></div><textarea class="input section-text" rows="8" placeholder="ここに内容を入力">${esc(item.text)}</textarea></div>`).join('')}
 
 let tableEdit=null;
 function tableLines(text){
@@ -120,7 +142,7 @@ else if(page==='search'){const found=notes.filter(n=>(n.title+' '+n.body+' '+n.c
 else if(page==='categories'){const cats=[...new Set(notes.map(n=>n.category||'未分類'))];html=title('カテゴリ一覧')+(cats.map(c=>`<button class="category" data-category="${esc(c)}">${esc(c)}（${notes.filter(n=>(n.category||'未分類')===c).length}）</button>`).join('')||'<div class="empty">カテゴリはありません。</div>')}
 else if(page==='favorites'){html=title('お気に入り')+(notes.filter(n=>n.favorite).map(row).join('')||'<div class="empty">お気に入りの記事はまだありません。</div>')}
 else if(page==='edit'){const n=notes.find(x=>x.id===editingId),legacy=splitLegacy(n?.body),extras=n?.extras||{};html=title(n?'記事を編集':'新しい記事を作成')+`<form id="editor"><p class="notice">以下の入力欄に直接書いて保存できます。歴史・事業・役員などの見出しも個別に編集できます。</p>${editorTools()}<label class="field" for="title">記事タイトル *</label><input id="title" class="input" maxlength="150" required value="${esc(n?.title||'')}"><label class="field" for="description">短い説明</label><input id="description" class="input" maxlength="200" value="${esc(n?.description||'')}"><label class="field" for="category">カテゴリ</label><input id="category" class="input" maxlength="80" value="${esc(n?.category||'')}"><h2 class="edit-group-title">記事の紹介文</h2><textarea id="body" class="input" rows="5" placeholder="記事の最初に表示する説明文">${esc(legacy.lead)}</textarea><h2 class="edit-group-title">記事の見出しと内容</h2><p class="hint">各項目に直接入力してください。文字を選んで「太字」、表は「表を編集」でセルごとに入力できます。表のセル内で改行するには &lt;br&gt; を入力してください。不要な見出しは削除できます。</p><div id="section-editors">${sectionInputs(legacy.items.length?legacy.items:['歴史','事業','役員'].map(heading=>({heading,text:''})))}</div><button type="button" class="btn" data-action="add-section">＋ 見出しを追加</button><h2 class="edit-group-title">関連項目</h2><textarea id="related" class="input" rows="3" placeholder="1行に1記事。例：[[東京]]">${esc(extras.related||'')}</textarea><h2 class="edit-group-title">脚注</h2><textarea id="footnotes" class="input" rows="3" placeholder="1行に1件の参考資料や注釈">${esc(extras.footnotes||'')}</textarea><h2 class="edit-group-title">外部リンク</h2><textarea id="external" class="input" rows="3" placeholder="1行に1つURLを入力">${esc(extras.external||'')}</textarea><h2 class="edit-group-title">関連記事</h2><textarea id="relatedPages" class="input" rows="3" placeholder="関連記事のタイトルを1行に1件">${esc(extras.relatedPages||'')}</textarea><h2 class="edit-group-title">情報ボックス</h2><label class="info-title-toggle"><input id="show-info-title" type="checkbox" ${n?.showInfoTitle===false?'':'checked'}> 情報ボックスの上部に記事タイトルを表示する</label><p class="hint">チェックを外すと、画像の「〇〇〇〇」のようなタイトル欄を非表示にします。記事自体のタイトルは残ります。</p><label class="field" for="info">大項目と項目・内容</label><p class="hint">「＋ 黄色い大項目」で区切りを作り、各行に「項目：内容」を入力します。大項目は【プロフィール】のように記録されます。</p><div class="rich-toolbar"><button type="button" class="btn small" data-action="info-group">＋ 黄色い大項目</button><button type="button" class="btn small" data-action="info-row">＋ 項目と内容</button><button type="button" class="btn small" data-action="format-bold"><b>B</b> 太字</button><button type="button" class="btn small" data-action="format-link">🔗 リンク</button><label class="group-color-picker">大項目の色 <input id="group-color" type="color" value="#f1f43c" aria-label="大項目の背景色"></label></div><textarea id="info" class="input" rows="9" placeholder="【プロフィール】&#10;愛称：サンプル&#10;出身地：[[東京都]]&#10;【活動情報】&#10;職業：歌手">${esc(n?.info||'')}</textarea><label class="field" for="image">情報ボックスの画像</label><input id="image" class="input" type="file" accept="image/*">${n?.image?'<label><input type="checkbox" id="remove-image"> 既存の画像を削除する</label>':''}<div class="actions"><button class="btn primary" type="submit">記事を保存</button><button class="btn" type="button" data-action="cancel">キャンセル</button></div></form>`}
-else if(page==='settings'){html=title('設定')+`<h2 class="section-title">バックアップ</h2><p class="subtitle">記事数：${notes.length}件。データはこの端末のブラウザ内に保存されます。</p><div class="actions"><button class="btn" data-action="export">JSONバックアップを保存</button><button class="btn" data-action="import">バックアップから復元</button></div><div class="notice">復元すると現在の記事を置き換えます。更新前にはバックアップを保存してください。</div><h2 class="section-title">アプリについて</h2><p class="subtitle">Wiki Memo Ver.17 · ライトモード専用 · PWA対応</p>`}
+else if(page==='settings'){html=title('設定')+`<h2 class="section-title">バックアップ</h2><p class="subtitle">記事数：${notes.length}件。データはこの端末のブラウザ内に保存されます。</p><div class="actions"><button class="btn" data-action="export">JSONバックアップを保存</button><button class="btn" data-action="import">バックアップから復元</button></div><div class="notice">復元すると現在の記事を置き換えます。更新前にはバックアップを保存してください。</div><h2 class="section-title">アプリについて</h2><p class="subtitle">Wiki Memo Ver.18 · ライトモード専用 · PWA対応</p>`}
 main.innerHTML=html;window.scrollTo(0,0)}
 function related(n){const names=[...String(n.body+'\n'+(n.extras?.related||'')).matchAll(/\[\[([^\]]+)\]\]/g)].map(m=>m[1]).concat(listField(n.extras?.relatedPages));return notes.filter(x=>x.id!==n.id&&(names.includes(x.title)||(n.category&&x.category===n.category))).slice(0,4)}
 // Persist scroll positions in browser history so native iOS swipe-back restores the prior article.
@@ -151,6 +173,17 @@ main.addEventListener('click',async e=>{const l=e.target.closest('[data-link]');
  const st=area.selectionStart,en=area.selectionEnd,selected=area.value.slice(st,en);
  const insert=a==='format-bold'?'**'+(selected||'太字')+'**':'[['+(selected||'記事名')+']]';
  area.setRangeText(insert,st,en,'select');area.focus();
+ }else if(a==='bullet'||a==='subbullet'){
+ const area=b.closest('.section-editor')?.querySelector('.section-text');
+ if(!area)return;
+ const st=area.selectionStart,en=area.selectionEnd;
+ const start=area.value.lastIndexOf('\n',Math.max(0,st-1))+1;
+ const endIndex=area.value.indexOf('\n',en);
+ const end=endIndex<0?area.value.length:endIndex;
+ const chosen=area.value.slice(start,end);
+ const prefix=a==='bullet'?'- ':'  - ';
+ const updated=chosen.split('\n').map(line=>line.trim()?prefix+line.replace(/^\s*[-*]\s+/,''):prefix).join('\n');
+ area.setRangeText(updated,start,end,'select');area.focus();
  }else if(a==='visual-table'){const area=b.closest('.section-editor')?.querySelector('.section-text');if(area)openTableEditor(area);
  }else if(a==='bold'||a==='table'||a==='table3'){const area=b.closest('.section-editor')?.querySelector('.section-text');if(!area)return;const st=area.selectionStart,en=area.selectionEnd;const selected=area.value.slice(st,en);const insert=a==='bold'?'**'+(selected||'太字')+'**':a==='table3'?'| 項目 | 内容1 | 内容2 |\n| --- | --- | --- |\n| 項目1 | 値1 | 値2 |\n| 項目2 | 値3 | 値4 |':'| 項目 | 内容 |\n| --- | --- |\n| 項目1 | 内容1 |\n| 項目2 | 内容2 |';area.setRangeText(insert,st,en,'end');area.focus();area.dispatchEvent(new Event('input',{bubbles:true}));}else if(a==='add-section'){const holder=$('#section-editors');holder.insertAdjacentHTML('beforeend',sectionInputs([{heading:'',text:''}]));holder.lastElementChild.querySelector('.section-heading').focus()}else if(a==='remove-section'){b.closest('.section-editor').remove()}else if(a==='new')newArticle();else if(a==='edit'){editingId=currentId;go('edit')}else if(a==='back'||a==='cancel')back();else if(a==='favorite'){const n=notes.find(x=>x.id===currentId);await persist({...n,favorite:!n.favorite});render()}else if(a==='share'){if(navigator.share)await navigator.share({title:notes.find(n=>n.id===currentId)?.title||'Wiki Memo',url:location.href});else toast('記事はこの端末内に保存されています')}else if(a==='delete'){if(!confirm('この記事を削除しますか？'))return;await write(s=>s.delete(currentId));await reload();historyStack=[];go('home',false,null);toast('記事を削除しました')}else if(a==='clear-search'){searchText='';render();$('#search-input')?.focus()}else if(a==='retry')await start();else if(a==='export'){const blob=new Blob([JSON.stringify({format:'wiki-memo',version:1,exportedAt:new Date().toISOString(),notes},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='wiki-memo-'+new Date().toISOString().slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),3000)}else if(a==='import')$('#import-file').click()}catch(err){console.error(err);toast(err.message||'操作に失敗しました')}});
 main.addEventListener('submit',async e=>{if(e.target.id!=='editor')return;e.preventDefault();const title=$('#title').value.trim();if(!title)return toast('タイトルを入力してください');const old=notes.find(n=>n.id===editingId);try{const file=$('#image').files[0];const image=$('#remove-image')?.checked?'':file?await imageData(file):old?.image||'';const n={id:old?.id||uid(),title,description:$('#description').value.trim(),category:$('#category').value.trim(),body:[$('#body').value.trim(),...collectSections().map(x=>'== '+(x.heading||'見出し')+' ==\n'+x.text)].filter(Boolean).join('\n\n'),extras:{related:$('#related').value,footnotes:$('#footnotes').value,external:$('#external').value,relatedPages:$('#relatedPages').value},info:$('#info').value,showInfoTitle:$('#show-info-title').checked,image,favorite:old?.favorite||false,created:old?.created||Date.now(),updated:Date.now()};await persist(n);currentId=n.id;page='article';historyStack=[];history.replaceState({app:navKey,page,currentId,scrollY:0},'');render();toast('記事を保存しました')}catch(err){console.error(err);toast('保存できませんでした：'+err.message)}});
